@@ -1,5 +1,5 @@
-import { ReactNode, useCallback, useRef, useState } from 'react';
-import { MatrixError, Room } from '$types/matrix-sdk';
+import React, { ReactNode, useCallback, useRef, useState } from 'react';
+import { MatrixError, Room, JoinRule } from '$types/matrix-js-sdk';
 import {
   Avatar,
   Badge,
@@ -135,6 +135,80 @@ function ErrorDialog({
   );
 }
 
+const getNextJoinAction = (
+  joinRule: string | undefined,
+  membership: string | undefined
+): 'join' | 'knock' | 'knock_waiting' | 'invite_only' => {
+  switch (joinRule) {
+    case JoinRule.Public:
+      return 'join';
+    case JoinRule.Invite:
+      if (membership === Membership.Invite) {
+        return 'join';
+      } else {
+        return 'invite_only';
+      }
+    case JoinRule.Private:
+      return 'join';
+    case JoinRule.Knock:
+      if (membership === Membership.Knock) {
+        return 'knock_waiting';
+      } else if (membership === Membership.Invite) {
+        return 'join';
+      } else {
+        return 'knock';
+      }
+    case JoinRule.Restricted:
+      return 'join';
+    case undefined:
+      return 'invite_only';
+    default:
+      return 'join';
+  }
+};
+
+const ActionError = ({
+  action,
+  title,
+  message,
+}: {
+  action: () => void;
+  title: string;
+  message: string;
+}) => {
+  return (
+    <Box gap="200">
+      <Button
+        onClick={action}
+        className={css.ActionButton}
+        variant="Critical"
+        fill="Solid"
+        size="300"
+      >
+        <Text size="B300" truncate>
+          Retry
+        </Text>
+      </Button>
+      <ErrorDialog title={title} message={message}>
+        {(openError) => (
+          <Button
+            onClick={openError}
+            className={css.ActionButton}
+            variant="Critical"
+            fill="Soft"
+            outlined
+            size="300"
+          >
+            <Text size="B300" truncate>
+              View Error
+            </Text>
+          </Button>
+        )}
+      </ErrorDialog>
+    </Box>
+  );
+};
+
 type RoomCardProps = {
   roomIdOrAlias: string;
   allRooms: string[];
@@ -143,6 +217,8 @@ type RoomCardProps = {
   topic?: string;
   memberCount?: number;
   roomType?: string;
+  joinRule?: string;
+  membership?: string;
   viaServers?: string[];
   onView?: (roomId: string) => void;
   renderTopicViewer: (name: string, topic: string, requestClose: () => void) => ReactNode;
@@ -158,6 +234,8 @@ export const RoomCard = as<'div', RoomCardProps>(
       topic,
       memberCount,
       roomType,
+      joinRule,
+      membership,
       viaServers,
       onView,
       renderTopicViewer,
@@ -201,11 +279,22 @@ export const RoomCard = as<'div', RoomCardProps>(
       )
     );
 
+    const action = getNextJoinAction(joinRule, membership);
+
     const [joinState, join] = useAsyncCallback<Room, MatrixError, []>(
       useCallback(() => mx.joinRoom(roomIdOrAlias, { viaServers }), [mx, roomIdOrAlias, viaServers])
     );
     const joining =
       joinState.status === AsyncStatus.Loading || joinState.status === AsyncStatus.Success;
+
+    const [knockState, knock] = useAsyncCallback<{ room_id: string }, MatrixError, []>(
+      useCallback(
+        () => mx.knockRoom(roomIdOrAlias, { viaServers }),
+        [mx, roomIdOrAlias, viaServers]
+      )
+    );
+    const knocking = knockState.status === AsyncStatus.Loading;
+    const alreadyKnocked = knockState.status === AsyncStatus.Success || action === 'knock_waiting';
 
     const [viewTopic, setViewTopic] = useState(false);
     const closeTopic = () => setViewTopic(false);
@@ -271,52 +360,62 @@ export const RoomCard = as<'div', RoomCardProps>(
             </Text>
           </Button>
         )}
-        {typeof joinedRoomId !== 'string' && joinState.status !== AsyncStatus.Error && (
-          <Button
-            onClick={join}
-            variant="Secondary"
-            size="300"
-            disabled={joining}
-            before={joining && <Spinner size="50" variant="Secondary" fill="Soft" />}
-          >
-            <Text size="B300" truncate>
-              {joining ? 'Joining' : 'Join'}
-            </Text>
-          </Button>
-        )}
-        {typeof joinedRoomId !== 'string' && joinState.status === AsyncStatus.Error && (
-          <Box gap="200">
+        {typeof joinedRoomId !== 'string' &&
+          joinState.status !== AsyncStatus.Error &&
+          (action === 'knock' || action === 'knock_waiting') && (
             <Button
-              onClick={join}
-              className={css.ActionButton}
-              variant="Critical"
-              fill="Solid"
+              onClick={knock}
+              variant="Secondary"
               size="300"
+              disabled={knocking || alreadyKnocked}
+              before={knocking && <Spinner size="50" variant="Secondary" fill="Soft" />}
             >
               <Text size="B300" truncate>
-                Retry
+                {alreadyKnocked
+                  ? 'Request Sent'
+                  : knocking
+                  ? 'Requesting Access'
+                  : 'Request Access'}
               </Text>
             </Button>
-            <ErrorDialog
-              title="Join Error"
-              message={joinState.error.message || 'Failed to join. Unknown Error.'}
+          )}
+        {typeof joinedRoomId !== 'string' &&
+          joinState.status !== AsyncStatus.Error &&
+          action === 'join' && (
+            <Button
+              onClick={join}
+              variant="Secondary"
+              size="300"
+              disabled={joining}
+              before={joining && <Spinner size="50" variant="Secondary" fill="Soft" />}
             >
-              {(openError) => (
-                <Button
-                  onClick={openError}
-                  className={css.ActionButton}
-                  variant="Critical"
-                  fill="Soft"
-                  outlined
-                  size="300"
-                >
-                  <Text size="B300" truncate>
-                    View Error
-                  </Text>
-                </Button>
-              )}
-            </ErrorDialog>
-          </Box>
+              <Text size="B300" truncate>
+                {joining ? 'Joining' : 'Join'}
+              </Text>
+            </Button>
+          )}
+        {typeof joinedRoomId !== 'string' &&
+          action === 'join' &&
+          joinState.status === AsyncStatus.Error && (
+            <ActionError
+              action={join}
+              title={'Join Error'}
+              message={joinState.error.message || 'Failed to join. Unknown Error.'}
+            />
+          )}
+        {typeof joinedRoomId !== 'string' &&
+          action === 'knock' &&
+          knockState.status === AsyncStatus.Error && (
+            <ActionError
+              action={knock}
+              title={'Join Request Error'}
+              message={knockState.error.message || 'Failed to send request to join. Unknown Error.'}
+            />
+          )}
+        {typeof joinedRoomId !== 'string' && action == 'invite_only' && (
+          <Button disabled={true} variant="Secondary" size="300">
+            <Text size="B300">Invite-only</Text>
+          </Button>
         )}
       </RoomCardBase>
     );
