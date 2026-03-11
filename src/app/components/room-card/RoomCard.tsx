@@ -1,5 +1,5 @@
-import React, { ReactNode, useCallback, useRef, useState } from 'react';
-import { MatrixError, Room, JoinRule } from '$types/matrix-js-sdk';
+import { ReactNode, useCallback, useRef, useState } from 'react';
+import { MatrixError, Room, JoinRule } from '$types/matrix-sdk';
 import {
   Avatar,
   Badge,
@@ -374,8 +374,8 @@ export const RoomCard = as<'div', RoomCardProps>(
                 {alreadyKnocked
                   ? 'Request Sent'
                   : knocking
-                  ? 'Requesting Access'
-                  : 'Request Access'}
+                    ? 'Requesting Access'
+                    : 'Request Access'}
               </Text>
             </Button>
           )}
